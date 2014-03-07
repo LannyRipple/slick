@@ -5,6 +5,7 @@ import scala.collection.mutable.HashMap
 import scala.slick.SlickException
 import scala.slick.ast._
 import scala.slick.compiler._
+import scala.slick.relational.{ResultConverter, CompiledMapping}
 import scala.slick.profile.{RelationalDriver, RelationalProfile}
 import TypeUtil.typeToTypeUtil
 
@@ -61,7 +62,7 @@ trait DistributedProfile extends MemoryQueryingProfile { driver: DistributedDriv
         if(logger.isDebugEnabled) logDebug("Evaluating "+n)
         val fromV = run(from).asInstanceOf[TraversableOnce[Any]]
         val b = n.nodeType.asCollectionType.cons.canBuildFrom()
-        b ++= fromV.map(v => converter.read(v.asInstanceOf[QueryInterpreter.ProductValue]))
+        b ++= fromV.map(v => converter.asInstanceOf[ResultConverter[MemoryResultConverterDomain, Any]].readGeneric(v.asInstanceOf[QueryInterpreter.ProductValue]))
         b.result()
       case n => super.run(n)
     }

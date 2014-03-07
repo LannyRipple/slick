@@ -4,7 +4,7 @@ import scala.language.implicitConversions
 import scala.slick.SlickException
 import scala.slick.ast._
 import scala.slick.compiler.{QueryCompiler, CompilerState, Phase}
-import scala.slick.jdbc.{PositionedParameters, PositionedResult, ResultSetType}
+import scala.slick.jdbc.{PositionedParameters, PositionedResult, ResultSetType, JdbcType}
 import scala.slick.lifted._
 import scala.slick.profile.{RelationalProfile, SqlProfile, Capability}
 import scala.slick.util.MacroSupport.macroSupportInterpolation
@@ -213,6 +213,13 @@ trait AccessDriver extends JdbcDriver { driver =>
           }
         f(retryCount)
       }
+      abstract override def wasNull(r: PositionedResult) = {
+        def f(c: Int): Boolean =
+          try super.wasNull(r) catch {
+            case e: SQLException if c > 0 && e.getSQLState == "S1090" => f(c-1)
+          }
+        f(retryCount)
+      }
       abstract override def setValue(v: T, p: PositionedParameters) = {
         def f(c: Int): Unit =
           try super.setValue(v, p) catch {
@@ -220,9 +227,9 @@ trait AccessDriver extends JdbcDriver { driver =>
           }
         f(retryCount)
       }
-      abstract override def setOption(v: Option[T], p: PositionedParameters) = {
+      abstract override def setNull(p: PositionedParameters) = {
         def f(c: Int): Unit =
-          try super.setOption(v, p) catch {
+          try super.setNull(p) catch {
             case e: SQLException if c > 0 && e.getSQLState == "S1090" => f(c-1)
           }
         f(retryCount)
@@ -234,34 +241,31 @@ trait AccessDriver extends JdbcDriver { driver =>
           }
         f(retryCount)
       }
+      abstract override def updateNull(r: PositionedResult) = {
+        def f(c: Int): Unit =
+          try super.updateNull(r) catch {
+            case e: SQLException if c > 0 && e.getSQLState == "S1090" => f(c-1)
+          }
+        f(retryCount)
+      }
     }
 
     // This is a nightmare... but it seems to work
     class UUIDJdbcType extends super.UUIDJdbcType {
       override def sqlType = java.sql.Types.BLOB
-      override def setOption(v: Option[UUID], p: PositionedParameters) =
-        if(v == None) p.setString(null) else p.setBytes(toBytes(v.get))
-      override def nextValueOrElse(d: =>UUID, r: PositionedResult) = { val v = nextValue(r); if(v.eq(null) || r.rs.wasNull) d else v }
-      override def nextOption(r: PositionedResult): Option[UUID] = { val v = nextValue(r); if(v.eq(null) || r.rs.wasNull) None else Some(v) }
+      override def setNull(p: PositionedParameters) = p.setString(null)
     }
 
     /* Access does not have a TINYINT (8-bit signed type), so we use 16-bit signed. */
     class ByteJdbcType extends super.ByteJdbcType {
       override def setValue(v: Byte, p: PositionedParameters) = p.setShort(v)
-      override def setOption(v: Option[Byte], p: PositionedParameters) = p.setIntOption(v.map(_.toInt))
       override def nextValue(r: PositionedResult) = r.nextInt.toByte
       override def updateValue(v: Byte, r: PositionedResult) = r.updateInt(v)
     }
 
-    /* Reading null from a nullable LONGBINARY column does not cause wasNull
-       to be set, so we check for nulls directly. */
-    class ByteArrayJdbcType extends super.ByteArrayJdbcType {
-      override def nextOption(r: PositionedResult): Option[Array[Byte]] = Option(nextValue(r))
-    }
-
     class LongJdbcType extends super.LongJdbcType {
       override def setValue(v: Long, p: PositionedParameters) = p.setString(v.toString)
-      override def setOption(v: Option[Long], p: PositionedParameters) = p.setStringOption(v.map(_.toString))
+      override def setNull(p: PositionedParameters) = p.setString(null)
     }
 
     override val booleanJdbcType = new BooleanJdbcType with Retry[Boolean]
